@@ -379,28 +379,24 @@ task.spawn(function()
 	end
 end)
 
--- [[ 🚀 LOGIC FLY HIỆN ĐẠI (V102: CFRAME DIRECT - BỎ BODYVELOCITY) ]]
-
--- Dọn dẹp fly khi character thay đổi (chết/hồi sinh)
-local flyConn = nil
-local flyActive = false
-
-local function StopFly()
-	flyActive = false
-	if flyConn then
-		flyConn:Disconnect()
-		flyConn = nil
-	end
-	-- Khôi phục Humanoid bình thường
-	local char = player.Character
-	if char then
-		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			humanoid.PlatformStand = false
-			humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+-- [ LOGIC FLY THEO CAMERA ]
+task.spawn(function()
+	local bv, bg
+	while task.wait() do
+		if _G.Flying and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = player.Character.HumanoidRootPart
+			if not bv then 
+				bv = Instance.new("BodyVelocity", hrp); bv.MaxForce = Vector3.new(1e9,1e9,1e9)
+				bg = Instance.new("BodyGyro", hrp); bg.MaxTorque = Vector3.new(1e9,1e9,1e9)
+			end
+			bv.Velocity = Camera.CFrame.LookVector * (player.Character.Humanoid.MoveDirection.Magnitude > 0 and _G.FlySpeed or 0)
+			bg.CFrame = Camera.CFrame
+		else
+			if bv then bv:Destroy(); bv = nil end
+			if bg then bg:Destroy(); bg = nil end
 		end
 	end
-end
+end)
 
 local function StartFly()
 	if flyActive then return end
@@ -431,17 +427,20 @@ local function StartFly()
 			local dist = dir.Magnitude
 			local stopDist = _G.FlyStopDistance or 5
 
-			if dist > stopDist then
+			if dist > stopDist + 2 then
 				-- Bay nhanh đến target (dừng khi còn stopDist studs)
 				local moveStep = dir.Unit * math.min(_G.FlySpeed * 0.015, dist - stopDist)
-				local lookDir = dir.Unit
-				h.CFrame = CFrame.new(h.Position + moveStep, h.Position + moveStep + lookDir)
-			elseif dist > stopDist - 2 then
-				-- Giảm tốc khi gần stop distance, giữ khoảng cách
-				h.CFrame = CFrame.new(h.Position, targetPos) + Vector3.new(0, 0.01, 0)
+				h.CFrame = CFrame.new(h.Position + moveStep, h.Position + moveStep + dir.Unit)
 			else
-				-- Đã đến nơi, giữ vị trí, bay nhẹ lên để không rơi
-				h.CFrame = CFrame.new(h.Position + Vector3.new(0, 0.01, 0), targetPos)
+				-- Trong tầm dừng: giữ vị trí chính xác cách target stopDist studs, mặt hướng về target
+				local awayDir = (h.Position - targetPos)
+				if awayDir.Magnitude > 0.1 then
+					awayDir = awayDir.Unit
+				else
+					awayDir = Vector3.new(0, 0, -1)
+				end
+				local holdPos = targetPos + awayDir * stopDist
+				h.CFrame = CFrame.new(holdPos, targetPos)
 			end
 		else
 			-- Chế độ tự do bay theo Camera (chỉ bay khi bấm phím di chuyển)
