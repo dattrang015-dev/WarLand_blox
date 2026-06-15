@@ -22,6 +22,8 @@ _G.AutoFarmLevel = false
 _G.SelectWeapon = "Melee" 
 _G.FlyTarget = nil -- Quản lý mục tiêu bay tự động
 _G.FlyStopDistance = 5 -- Khoảng cách dừng bay (studs)
+local flyBV = nil
+local flyBG = nil
 
 -- [ DATA QUEST CHUẨN ]
 local QuestData = {
@@ -379,105 +381,68 @@ task.spawn(function()
 	end
 end)
 
--- [ LOGIC FLY THEO CAMERA ]
+
+
+-- [ LOGIC FLY THEO CAMERA + FLY TARGET (BodyVelocity/BodyGyro) ]
 task.spawn(function()
-	local bv, bg
 	while task.wait() do
 		if _G.Flying and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
 			local hrp = player.Character.HumanoidRootPart
-			if not bv then 
-				bv = Instance.new("BodyVelocity", hrp); bv.MaxForce = Vector3.new(1e9,1e9,1e9)
-				bg = Instance.new("BodyGyro", hrp); bg.MaxTorque = Vector3.new(1e9,1e9,1e9)
+			local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+
+			-- Tạo BodyVelocity + BodyGyro nếu chưa có
+			if not flyBV or not flyBV.Parent then
+				flyBV = Instance.new("BodyVelocity", hrp)
+				flyBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+				flyBV.Velocity = Vector3.new(0, 0, 0)
+				flyBG = Instance.new("BodyGyro", hrp)
+				flyBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+				flyBG.CFrame = Camera.CFrame
+				if humanoid then humanoid.PlatformStand = true end
 			end
-			bv.Velocity = Camera.CFrame.LookVector * (player.Character.Humanoid.MoveDirection.Magnitude > 0 and _G.FlySpeed or 0)
-			bg.CFrame = Camera.CFrame
-		else
-			if bv then bv:Destroy(); bv = nil end
-			if bg then bg:Destroy(); bg = nil end
-		end
-	end
-end)
 
-local function StartFly()
-	if flyActive then return end
-	flyActive = true
+			if _G.FlyTarget then
+				-- Chế độ Auto Farm: Bay đến target
+				local targetPos = _G.FlyTarget.Position
+				local dir = (targetPos - hrp.Position)
+				local dist = dir.Magnitude
+				local stopDist = _G.FlyStopDistance or 5
 
-	local char = player.Character
-	if not char then return end
-	local hrp = char:FindFirstChild("HumanoidRootPart")
-	local humanoid = char:FindFirstChildOfClass("Humanoid")
-	if not hrp or not humanoid then flyActive = false; return end
-
-	-- Ngừng Humanoid chống lại chuyển động
-	humanoid.PlatformStand = true
-
-	flyConn = RunService.Stepped:Connect(function()
-		if not flyActive then return end
-
-		-- Kiểm tra character còn tồn tại
-		local c = player.Character
-		if not c then StopFly(); return end
-		local h = c:FindFirstChild("HumanoidRootPart")
-		if not h then StopFly(); return end
-
-		if _G.FlyTarget then
-			-- Chế độ Auto Farm: Bay đến vị trí target bằng CFrame
-			local targetPos = _G.FlyTarget.Position
-			local dir = (targetPos - h.Position)
-			local dist = dir.Magnitude
-			local stopDist = _G.FlyStopDistance or 5
-
-			if dist > stopDist + 2 then
-				-- Bay nhanh đến target (dừng khi còn stopDist studs)
-				local moveStep = dir.Unit * math.min(_G.FlySpeed * 0.015, dist - stopDist)
-				h.CFrame = CFrame.new(h.Position + moveStep, h.Position + moveStep + dir.Unit)
-			else
-				-- Trong tầm dừng: giữ vị trí chính xác cách target stopDist studs, mặt hướng về target
-				local awayDir = (h.Position - targetPos)
-				if awayDir.Magnitude > 0.1 then
-					awayDir = awayDir.Unit
+				if dist > stopDist then
+					-- Bay về phía target
+					flyBV.Velocity = dir.Unit * _G.FlySpeed
+					flyBG.CFrame = CFrame.new(hrp.Position, targetPos)
 				else
-					awayDir = Vector3.new(0, 0, -1)
-				end
-				local holdPos = targetPos + awayDir * stopDist
-				h.CFrame = CFrame.new(holdPos, targetPos)
-			end
-		else
-			-- Chế độ tự do bay theo Camera (chỉ bay khi bấm phím di chuyển)
-			local humanoid = c:FindFirstChildOfClass("Humanoid")
-			if humanoid and humanoid.MoveDirection.Magnitude > 0 then
-				local cam = workspace.CurrentCamera
-				if cam then
-					local moveDir = (cam.CFrame.LookVector * humanoid.MoveDirection.Z + cam.CFrame.RightVector * humanoid.MoveDirection.X) * _G.FlySpeed * 0.015
-					h.CFrame = CFrame.new(h.Position + moveDir, h.Position + moveDir + cam.CFrame.LookVector)
+					-- Đã đến gần target → dừng lại, giữ vị trí
+					flyBV.Velocity = Vector3.new(0, 0, 0)
+					flyBG.CFrame = CFrame.new(hrp.Position, targetPos)
 				end
 			else
-				-- Giữ trên không nếu không di chuyển
-				h.CFrame = h.CFrame + Vector3.new(0, 0.01, 0)
+				-- Chế độ tự do: Bay theo camera (chỉ khi bấm phím di chuyển)
+				if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+					flyBV.Velocity = Camera.CFrame.LookVector * _G.FlySpeed
+				else
+					flyBV.Velocity = Vector3.new(0, 0, 0)
+				end
+				flyBG.CFrame = Camera.CFrame
+			end
+		else
+			-- Tắt fly: dọn dẹp BodyVelocity + BodyGyro
+			if flyBV then flyBV:Destroy(); flyBV = nil end
+			if flyBG then flyBG:Destroy(); flyBG = nil end
+			if player.Character then
+				local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+				if humanoid then humanoid.PlatformStand = false end
 			end
 		end
-	end)
-end
-
-player.CharacterAdded:Connect(function(char)
-	_G.FlyTarget = nil
-	if flyActive then
-		StopFly()
-		-- Chờ character load xong rồi bay lại
-		task.wait(1)
-		if _G.Flying then StartFly() end
 	end
 end)
 
--- Vòng lặp quản lý bật/tắt fly
-task.spawn(function()
-	while task.wait(0.1) do
-		if _G.Flying and not flyActive then
-			StartFly()
-		elseif not _G.Flying and flyActive then
-			StopFly()
-		end
-	end
+-- Reset fly khi character respawn
+player.CharacterAdded:Connect(function()
+	_G.FlyTarget = nil
+	if flyBV then flyBV:Destroy(); flyBV = nil end
+	if flyBG then flyBG:Destroy(); flyBG = nil end
 end)
 
 -- NÚT BẬT MENU
